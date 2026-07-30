@@ -1,129 +1,179 @@
 # KStreamsDemo
 
-A small playground for **Kafka Streams**, **KTables**, and **RocksDB** state stores.
+A **Kafka Streams + Spring Boot** playground demonstrating KTables, RocksDB state
+stores, and Interactive Queries.
 
-The demo aggregates purchase events per user into a materialized KTable that is
-backed by RocksDB on disk, and reads that store back with Interactive Queries.
+Purchase events flow into a Kafka topic, get aggregated per user in real time, and
+the results are stored in RocksDB — queryable instantly via REST without touching Kafka.
 
 ```
-purchases topic ──stream──> groupByKey ──aggregate──> KTable (RocksDB store "user-stats-store")
-   key=userId                                              │
-   value=Purchase(item, amount)                            └──> user-stats topic (changelog)
+POST /api/purchases/random
+        │
+        ▼
+  purchases topic  ──►  groupByKey  ──►  aggregate  ──►  RocksDB ("user-stats-store")
+                                                               │
+                                                               ▼
+                                                       GET /api/stats
 ```
 
-Per user we keep a running `UserStats(count, total, maxAmount)` — see
-[`UserStats`](src/main/java/org/example/model/UserStats.java) for the
-initializer/aggregator logic and [`StreamsTopology`](src/main/java/org/example/StreamsTopology.java)
-for the topology.
+---
 
-## Requirements
+## Prerequisites
 
-- Java 17+ (you have 17)
-- Maven (you have 3.9)
-- A local Kafka broker on `localhost:9092`
+| Tool | Version | Install |
+|------|---------|---------|
+| Java | 17+ | `brew install openjdk@17` |
+| Maven | 3.9+ | `brew install maven` |
+| Kafka | 3.9+ | `brew install kafka` |
+| Docker | any | [Docker Desktop](https://www.docker.com/products/docker-desktop/) |
 
-## 1. Install & start Kafka locally (KRaft, no ZooKeeper)
+---
 
-Kafka 4.x runs in KRaft mode — no ZooKeeper needed.
+## Option 1 — Run Locally (Kafka on your Mac)
+
+### Step 1 — Start Kafka
 
 ```bash
-brew install kafka
+brew services start kafka
 ```
 
-Homebrew can run it as a service:
+### Step 2 — Create the topics
 
 ```bash
-brew services start kafka        # starts broker on localhost:9092
+kafka-topics --bootstrap-server localhost:9092 --create --topic purchases  --partitions 3 --replication-factor 1
+kafka-topics --bootstrap-server localhost:9092 --create --topic user-stats --partitions 3 --replication-factor 1
 ```
 
-Or run it in the foreground from the install dir (adjust the path to your
-Homebrew prefix — `brew --prefix kafka`):
+### Step 3 — Start the app
 
 ```bash
-KAFKA=$(brew --prefix kafka)
-# Format storage once (first time only):
-KAFKA_CLUSTER_ID=$("$KAFKA"/libexec/bin/kafka-storage.sh random-uuid)
-"$KAFKA"/libexec/bin/kafka-storage.sh format \
-    -t "$KAFKA_CLUSTER_ID" \
-    -c "$KAFKA"/libexec/config/server.properties
-# Start the broker:
-"$KAFKA"/libexec/bin/kafka-server-start.sh "$KAFKA"/libexec/config/server.properties
+mvn spring-boot:run
 ```
 
-> With `brew services start kafka` the storage is formatted for you.
+Wait until you see:
 
-## 2. Create the topics
+```
+Started KStreamsDemoApplication in X seconds
+```
+
+### Step 4 — Produce events and query the store
+
+Open a second terminal:
 
 ```bash
-KAFKA=$(brew --prefix kafka)
-"$KAFKA"/libexec/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
-    --create --if-not-exists --topic purchases  --partitions 3 --replication-factor 1
-"$KAFKA"/libexec/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
-    --create --if-not-exists --topic user-stats --partitions 3 --replication-factor 1
+# Produce one random purchase
+curl -X POST http://localhost:8080/api/purchases/random
+
+# Produce 10 random purchases
+for i in {1..10}; do curl -s -X POST http://localhost:8080/api/purchases/random; echo; done
+
+# Query all users from the RocksDB store
+curl http://localhost:8080/api/stats
+
+# Query a specific user
+curl http://localhost:8080/api/stats/alice
+
+# Produce a specific purchase
+curl -X POST http://localhost:8080/api/purchases \
+  -H "Content-Type: application/json" \
+  -d '{"userId":"alice","item":"book","amount":29.99}'
 ```
 
-(Streams would auto-create its internal changelog/repartition topics, but the
-input/output topics are yours to create.)
+The app also logs the store contents automatically every 5 seconds in the first terminal.
 
-## 3. Run the Streams app
+---
+
+## Option 2 — Run with Docker Compose (no local Kafka needed)
 
 ```bash
-mvn exec:java -Dexec.mainClass=org.example.StreamsApp
+docker compose up --build
 ```
 
-It starts the topology and every few seconds prints the current contents of the
-RocksDB store via Interactive Queries:
-
-```
----- user-stats-store @ 14:02:11 ----
-  alice    count=3   total=  420.50 avg= 140.17 max= 300.00
-  bob      count=1   total= 1200.00 avg=1200.00 max=1200.00
-```
-
-## 4. Produce some purchases (second terminal)
+This starts Kafka, creates the topics, and starts the app — all in one command.
+Once running, use the same `curl` commands from Option 1.
 
 ```bash
-mvn exec:java -Dexec.mainClass=org.example.ProducerApp -Dexec.args="30"
-# -Dexec.args="0" produces endlessly until Ctrl+C
+# Stop everything
+docker compose down
 ```
 
-Watch the numbers in the Streams app terminal update as events flow in.
+---
 
-## 5. Inspect RocksDB on disk
+## Option 3 — Run on Kubernetes (minikube)
 
-The state store is persisted under `./kafka-streams-state/kstreams-demo/`:
+### Step 1 — Build the image into minikube
 
 ```bash
-find kafka-streams-state -maxdepth 4 -type d
-ls kafka-streams-state/kstreams-demo/*/rocksdb/user-stats-store
+eval $(minikube docker-env)
+docker build -t kstreams-demo:latest .
 ```
 
-You'll see RocksDB's own files (`*.sst`, `LOG`, `CURRENT`, `MANIFEST-*`, ...).
-Because the KTable is also backed by a compacted changelog topic in Kafka, the
-store is rebuilt automatically if you delete this directory and restart.
-
-## Watch the output topic directly (optional)
+### Step 2 — Deploy
 
 ```bash
-KAFKA=$(brew --prefix kafka)
-"$KAFKA"/libexec/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
-    --topic user-stats --property print.key=true --from-beginning
+kubectl apply -f k8s/namespace.yml
+kubectl apply -f k8s/kafka.yml
+kubectl apply -f k8s/configmap.yml
+kubectl apply -f k8s/service.yml
+kubectl apply -f k8s/statefulset.yml
 ```
 
-## Test without a broker
+### Step 3 — Wait for pods to be ready
 
-[`StreamsTopologyTest`](src/test/java/org/example/StreamsTopologyTest.java) runs
-the whole topology in-process with `TopologyTestDriver` — no Kafka required:
+```bash
+kubectl get pods -n kafka-demo -w
+```
+
+All pods should show `Running` and `READY 1/1`.
+
+### Step 4 — Forward the port and test
+
+```bash
+kubectl port-forward -n kafka-demo svc/kstreams-svc 8080:8080
+curl -X POST http://localhost:8080/api/purchases/random
+curl http://localhost:8080/api/stats
+```
+
+---
+
+## REST API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/purchases/random` | Produce a random purchase event |
+| `POST` | `/api/purchases` | Produce a specific purchase (JSON body) |
+| `GET` | `/api/stats` | All users' aggregated stats from RocksDB |
+| `GET` | `/api/stats/{userId}` | One user's stats (`404` if not found, `503` if Streams not ready) |
+| `GET` | `/actuator/health` | App health |
+| `GET` | `/actuator/health/liveness` | K8s liveness probe |
+| `GET` | `/actuator/health/readiness` | K8s readiness probe |
+
+---
+
+## Run Tests (no Kafka needed)
 
 ```bash
 mvn test
 ```
 
-## Things to try next
+Uses `TopologyTestDriver` — runs the full topology in-process with no broker.
 
-- Change the aggregation in `UserStats` (e.g. track min, or per-item breakdown).
-- Add a **windowed** aggregation (`.windowedBy(TimeWindows.ofSizeWithNoGrace(...))`)
-  to see windowed RocksDB stores.
-- Add a **KStream–KTable join** (e.g. enrich purchases with a users KTable).
-- Delete `kafka-streams-state/` while stopped and restart to watch the store
-  restore from the changelog.
+---
+
+## Inspect RocksDB on disk
+
+```bash
+find kafka-streams-state -type f | sort
+```
+
+You will see RocksDB's own files (`*.log`, `*.sst`, `MANIFEST`, `CURRENT`, `OPTIONS`)
+organised per partition under `kafka-streams-state/kstreams-demo/`.
+
+**To test fault tolerance:** stop the app, delete the state directory, restart.
+The store rebuilds automatically from the Kafka changelog topic.
+
+```bash
+rm -rf kafka-streams-state/
+mvn spring-boot:run   # store restored from changelog
+curl http://localhost:8080/api/stats   # same data as before
+```

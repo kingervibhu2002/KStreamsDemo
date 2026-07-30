@@ -16,9 +16,6 @@ spring:
       properties:
         commit.interval.ms: 1000
         auto.offset.reset: earliest
-        # In K8s this is set to the pod's stable DNS name via the Downward API
-        # so Interactive Queries cross-pod routing works. Empty = single-node only.
-        application.server: ${SPRING_KAFKA_STREAMS_PROPERTIES_APPLICATION_SERVER:}
 
   # Graceful shutdown: Spring waits up to 30 s for in-flight requests and
   # Kafka Streams to commit + close RocksDB before the process exits.
