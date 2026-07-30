@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kstreams-config
+  namespace: kafka-demo
+data:
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: "kafka-svc.kafka-demo.svc.cluster.local:9092"
+  SPRING_KAFKA_STREAMS_STATE_DIR: "/data/kafka-streams-state"
+  # Match the number of partitions (3) so each thread can own one partition.
+  SPRING_KAFKA_STREAMS_PROPERTIES_NUM_STREAM_THREADS: "3"
+  SPRING_KAFKA_STREAMS_PROPERTIES_COMMIT_INTERVAL_MS: "1000"
+  SPRING_KAFKA_STREAMS_PROPERTIES_AUTO_OFFSET_RESET: "earliest"
+  SPRING_KAFKA_STREAMS_PROPERTIES_DEFAULT_DESERIALIZATION_EXCEPTION_HANDLER: >-
+    org.apache.kafka.streams.errors.LogAndContinueExceptionHandler

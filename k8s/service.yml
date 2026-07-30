@@ -1,0 +1,38 @@
+# Headless service — gives each StatefulSet pod a stable DNS name:
+#   kstreams-demo-0.kstreams-headless.kafka-demo.svc.cluster.local
+#   kstreams-demo-1.kstreams-headless.kafka-demo.svc.cluster.local
+#   kstreams-demo-2.kstreams-headless.kafka-demo.svc.cluster.local
+#
+# Kafka Streams uses these names in application.server so peers know
+# which pod to call for Interactive Queries on keys they don't own locally.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kstreams-headless
+  namespace: kafka-demo
+spec:
+  clusterIP: None          # headless — no load-balancing, direct pod DNS
+  selector:
+    app: kstreams-demo
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+# Regular ClusterIP service for REST API access from inside the cluster
+# (or expose as LoadBalancer / Ingress for external access).
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kstreams-svc
+  namespace: kafka-demo
+spec:
+  type: ClusterIP
+  selector:
+    app: kstreams-demo
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

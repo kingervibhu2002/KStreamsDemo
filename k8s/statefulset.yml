@@ -1,0 +1,84 @@
+# StatefulSet — NOT a Deployment — because:
+#
+#   1. Each pod owns a fixed subset of Kafka partitions.  Restart must land on
+#      the same pod so it finds its local RocksDB rather than replaying from
+#      the changelog (slow).
+#
+#   2. Stable pod DNS names (kstreams-demo-0.kstreams-headless:8080, etc.) are
+#      required for Interactive Queries cross-pod routing: Kafka Streams tells
+#      every peer "I own these keys, ask me at <application.server>".
+#
+#   3. volumeClaimTemplates give each pod its own PVC — RocksDB data survives
+#      pod restarts without a full changelog replay.
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kstreams-demo
+  namespace: kafka-demo
+spec:
+  serviceName: kstreams-headless   # must match the headless Service name
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kstreams-demo
+  template:
+    metadata:
+      labels:
+        app: kstreams-demo
+    spec:
+      terminationGracePeriodSeconds: 45   # give Streams time to commit + close RocksDB
+      containers:
+        - name: app
+          image: kstreams-demo:latest     # replace with your registry path
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: kstreams-config
+          env:
+            # Downward API: inject the pod's own stable DNS name so Kafka Streams
+            # can advertise it to peers for Interactive Queries routing.
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: SPRING_KAFKA_STREAMS_PROPERTIES_APPLICATION_SERVER
+              value: "$(POD_NAME).kstreams-headless.kafka-demo.svc.cluster.local:8080"
+          volumeMounts:
+            - name: rocksdb-data
+              mountPath: /data
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"    # JVM gets 65% (~650 MB heap); rest for RocksDB off-heap
+              cpu: "1000m"
+          # Liveness: JVM is alive. Restart the pod if this fails.
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            failureThreshold: 3
+          # Readiness: Streams has reached RUNNING state. Only then send traffic.
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            failureThreshold: 6
+
+  # Each pod gets its own PVC — RocksDB state persists across restarts.
+  volumeClaimTemplates:
+    - metadata:
+        name: rocksdb-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

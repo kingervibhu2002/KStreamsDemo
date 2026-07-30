@@ -1,0 +1,10 @@
+.git
+.idea
+*.iml
+*.iws
+*.ipr
+target/
+kafka-streams-state/
+k8s/
+*.md
+.DS_Store
