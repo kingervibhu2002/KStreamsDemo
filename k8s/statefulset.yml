@@ -44,7 +44,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
-            - name: SPRING_KAFKA_STREAMS_PROPERTIES_APPLICATION_SERVER
+            # APPLICATION_SERVER flows to both:
+            #   app.instance-address  (StoreQueryService routing decisions)
+            #   spring.kafka.streams.properties.application.server  (peer advertisement)
+            - name: APPLICATION_SERVER
               value: "$(POD_NAME).kstreams-headless.kafka-demo.svc.cluster.local:8080"
           volumeMounts:
             - name: rocksdb-data

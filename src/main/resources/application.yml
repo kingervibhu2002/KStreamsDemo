@@ -1,3 +1,9 @@
+# This pod's own host:port — used by Kafka Streams to advertise itself to peers
+# and by StoreQueryService to decide whether to serve locally or forward.
+# Set APPLICATION_SERVER env var in Docker / K8s to override.
+app:
+  instance-address: ${APPLICATION_SERVER:localhost:8080}
+
 spring:
   kafka:
     # Override via SPRING_KAFKA_BOOTSTRAP_SERVERS env var in Docker / K8s.
@@ -16,6 +22,9 @@ spring:
       properties:
         commit.interval.ms: 1000
         auto.offset.reset: earliest
+        # Advertised to peers so they know where to forward IQ requests.
+        # Matches app.instance-address via the same APPLICATION_SERVER env var.
+        application.server: ${APPLICATION_SERVER:localhost:8080}
 
   # Graceful shutdown: Spring waits up to 30 s for in-flight requests and
   # Kafka Streams to commit + close RocksDB before the process exits.

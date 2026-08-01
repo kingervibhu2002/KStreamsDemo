@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
@@ -38,20 +39,22 @@ public class StatsController {
         this.producerService = producerService;
     }
 
+    // local=true is set by peer instances when forwarding — skips routing, reads local RocksDB directly.
     @GetMapping("/stats")
-    public ResponseEntity<?> getAllStats() {
+    public ResponseEntity<?> getAllStats(@RequestParam(defaultValue = "false") boolean local) {
         try {
-            Map<String, UserStats> stats = storeQueryService.getAll();
-            return ResponseEntity.ok(stats);
+            return ResponseEntity.ok(storeQueryService.getAll(local));
         } catch (IllegalStateException e) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(e.getMessage());
         }
     }
 
     @GetMapping("/stats/{userId}")
-    public ResponseEntity<?> getStatsForUser(@PathVariable String userId) {
+    public ResponseEntity<?> getStatsForUser(
+            @PathVariable String userId,
+            @RequestParam(defaultValue = "false") boolean local) {
         try {
-            return storeQueryService.getForUser(userId)
+            return storeQueryService.getForUser(userId, local)
                     .<ResponseEntity<?>>map(ResponseEntity::ok)
                     .orElse(ResponseEntity.notFound().build());
         } catch (IllegalStateException e) {
