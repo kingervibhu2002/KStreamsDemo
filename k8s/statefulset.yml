@@ -4,12 +4,14 @@
 #      the same pod so it finds its local RocksDB rather than replaying from
 #      the changelog (slow).
 #
-#   2. Stable pod DNS names (kstreams-demo-0.kstreams-headless:8080, etc.) are
-#      required for Interactive Queries cross-pod routing: Kafka Streams tells
-#      every peer "I own these keys, ask me at <application.server>".
-#
-#   3. volumeClaimTemplates give each pod its own PVC — RocksDB data survives
+#   2. volumeClaimTemplates give each pod its own PVC — RocksDB data survives
 #      pod restarts without a full changelog replay.
+#
+# Reads no longer need stable per-pod DNS names: StatsController reads from Redis
+# (populated by StatsSyncConsumer off user-stats-topic), which is shared across every
+# instance, so any pod can answer a query for any userId — no cross-pod IQ routing.
+# The StatefulSet shape is kept purely for RocksDB restart efficiency on the
+# processing side, not for the read path.
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -34,21 +36,11 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+          # SPRING_DATA_REDIS_HOST should point at the Redis Service in this namespace —
+          # set it in the kstreams-config ConfigMap.
           envFrom:
             - configMapRef:
                 name: kstreams-config
-          env:
-            # Downward API: inject the pod's own stable DNS name so Kafka Streams
-            # can advertise it to peers for Interactive Queries routing.
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            # APPLICATION_SERVER flows to both:
-            #   app.instance-address  (StoreQueryService routing decisions)
-            #   spring.kafka.streams.properties.application.server  (peer advertisement)
-            - name: APPLICATION_SERVER
-              value: "$(POD_NAME).kstreams-headless.kafka-demo.svc.cluster.local:8080"
           volumeMounts:
             - name: rocksdb-data
               mountPath: /data

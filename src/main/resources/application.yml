@@ -1,10 +1,10 @@
-# This pod's own host:port — used by Kafka Streams to advertise itself to peers
-# and by StoreQueryService to decide whether to serve locally or forward.
-# Set APPLICATION_SERVER env var in Docker / K8s to override.
-app:
-  instance-address: ${APPLICATION_SERVER:localhost:8080}
-
 spring:
+  data:
+    redis:
+      # Serving layer — StatsSyncConsumer writes here, RedisStatsService reads here.
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+
   kafka:
     # Override via SPRING_KAFKA_BOOTSTRAP_SERVERS env var in Docker / K8s.
     bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
@@ -15,6 +15,19 @@ spring:
       properties:
         spring.json.add.type.headers: false
 
+    # Plain consumer (not Kafka Streams) for StatsSyncConsumer, reading user-stats-topic
+    # and writing each update into Redis. Bytes on that topic have no type header
+    # (written by the Streams topology's own JsonSerde), so we pin the target type
+    # explicitly instead of relying on headers.
+    consumer:
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      auto-offset-reset: earliest
+      properties:
+        spring.json.use.type.headers: false
+        spring.json.value.default.type: org.example.model.UserStats
+        spring.json.trusted.packages: org.example.model
+
     streams:
       application-id: kstreams-demo
       # Override via SPRING_KAFKA_STREAMS_STATE_DIR in Docker / K8s (points to a PVC).
@@ -22,9 +35,6 @@ spring:
       properties:
         commit.interval.ms: 1000
         auto.offset.reset: earliest
-        # Advertised to peers so they know where to forward IQ requests.
-        # Matches app.instance-address via the same APPLICATION_SERVER env var.
-        application.server: ${APPLICATION_SERVER:localhost:8080}
 
   # Graceful shutdown: Spring waits up to 30 s for in-flight requests and
   # Kafka Streams to commit + close RocksDB before the process exits.

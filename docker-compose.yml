@@ -42,6 +42,17 @@ services:
           --create --if-not-exists --topic user-stats --partitions 3 --replication-factor 1 && \
         echo 'Topics ready.'
 
+  # ── Redis (serving layer — synced from user-stats-topic) ────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   # ── Spring Boot Kafka Streams app ───────────────────────────────────────────
   app:
     build: .
@@ -50,11 +61,14 @@ services:
     environment:
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       SPRING_KAFKA_STREAMS_STATE_DIR: /data/kafka-streams-state
+      SPRING_DATA_REDIS_HOST: redis
     volumes:
       - rocksdb-data:/data
     depends_on:
       kafka-init:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health/readiness"]
       interval: 10s
